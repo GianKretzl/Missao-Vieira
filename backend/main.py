@@ -1,13 +1,13 @@
-import json
 import os
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Dict, List, Optional, Literal
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from psycopg import connect
+from psycopg.rows import dict_row
 
 try:
     from openai import OpenAI
@@ -16,8 +16,7 @@ except Exception:
 
 load_dotenv()
 
-BASE_DIR = Path(__file__).resolve().parent
-DB_FILE = BASE_DIR / "submissions_db.json"
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/missao_vieira")
 
 app = FastAPI(title="Missao Vieira API", version="1.0.0")
 
@@ -31,6 +30,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def on_startup() -> None:
+    init_db()
 
 
 class StudentInfo(BaseModel):
@@ -80,21 +84,157 @@ class ChatResponse(BaseModel):
     scores: Scores
 
 
+def get_connection():
+    return connect(DATABASE_URL, autocommit=True, row_factory=dict_row)
+
+
+def init_db() -> None:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS submissions (
+                    id TEXT PRIMARY KEY,
+                    full_name TEXT NOT NULL,
+                    class_group TEXT NOT NULL,
+                    phone TEXT NOT NULL DEFAULT '',
+                    guardian_name TEXT NOT NULL DEFAULT '',
+                    top_path TEXT NOT NULL,
+                    top_path_title TEXT NOT NULL,
+                    match_percentage INTEGER NOT NULL,
+                    score_regular INTEGER NOT NULL DEFAULT 0,
+                    score_administracao INTEGER NOT NULL DEFAULT 0,
+                    score_eletromecanica INTEGER NOT NULL DEFAULT 0,
+                    submitted_at TIMESTAMPTZ NOT NULL
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_submissions_phone ON submissions (phone)
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_submissions_name_class ON submissions ((lower(full_name)), class_group)
+                """
+            )
+
+
+def to_submission_record(row: Dict[str, object]) -> SubmissionRecord:
+    submitted_at = row["submitted_at"]
+    submitted_text = submitted_at.isoformat() if hasattr(submitted_at, "isoformat") else str(submitted_at)
+    return SubmissionRecord(
+        id=str(row["id"]),
+        studentInfo=StudentInfo(
+            fullName=str(row["full_name"]),
+            classGroup=str(row["class_group"]),
+            phone=str(row["phone"] or ""),
+            guardianName=str(row["guardian_name"] or ""),
+        ),
+        topPath=str(row["top_path"]),
+        topPathTitle=str(row["top_path_title"]),
+        matchPercentage=int(row["match_percentage"]),
+        scores=Scores(
+            regular=int(row["score_regular"]),
+            administracao=int(row["score_administracao"]),
+            eletromecanica=int(row["score_eletromecanica"]),
+        ),
+        submittedAt=submitted_text,
+    )
+
+
 def read_submissions() -> List[SubmissionRecord]:
-    if not DB_FILE.exists():
-        return []
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT *
+                FROM submissions
+                ORDER BY submitted_at DESC
+                """
+            )
+            rows = cur.fetchall()
+    return [to_submission_record(row) for row in rows]
 
-    try:
-        raw = DB_FILE.read_text(encoding="utf-8")
-        payload = json.loads(raw)
-        return [SubmissionRecord.model_validate(item) for item in payload]
-    except Exception:
-        return []
+
+def upsert_submission(record: SubmissionRecord) -> None:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id
+                FROM submissions
+                WHERE (
+                    %s <> '' AND phone = %s
+                )
+                OR (
+                    lower(full_name) = lower(%s) AND class_group = %s
+                )
+                ORDER BY submitted_at DESC
+                LIMIT 1
+                """,
+                (
+                    record.studentInfo.phone,
+                    record.studentInfo.phone,
+                    record.studentInfo.fullName,
+                    record.studentInfo.classGroup,
+                ),
+            )
+            existing = cur.fetchone()
+            submission_id = existing["id"] if existing else record.id
+
+            cur.execute(
+                """
+                INSERT INTO submissions (
+                    id,
+                    full_name,
+                    class_group,
+                    phone,
+                    guardian_name,
+                    top_path,
+                    top_path_title,
+                    match_percentage,
+                    score_regular,
+                    score_administracao,
+                    score_eletromecanica,
+                    submitted_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    full_name = EXCLUDED.full_name,
+                    class_group = EXCLUDED.class_group,
+                    phone = EXCLUDED.phone,
+                    guardian_name = EXCLUDED.guardian_name,
+                    top_path = EXCLUDED.top_path,
+                    top_path_title = EXCLUDED.top_path_title,
+                    match_percentage = EXCLUDED.match_percentage,
+                    score_regular = EXCLUDED.score_regular,
+                    score_administracao = EXCLUDED.score_administracao,
+                    score_eletromecanica = EXCLUDED.score_eletromecanica,
+                    submitted_at = EXCLUDED.submitted_at
+                """,
+                (
+                    submission_id,
+                    record.studentInfo.fullName,
+                    record.studentInfo.classGroup,
+                    record.studentInfo.phone,
+                    record.studentInfo.guardianName,
+                    record.topPath,
+                    record.topPathTitle,
+                    record.matchPercentage,
+                    record.scores.regular,
+                    record.scores.administracao,
+                    record.scores.eletromecanica,
+                    datetime.fromisoformat(record.submittedAt),
+                ),
+            )
 
 
-def write_submissions(records: List[SubmissionRecord]) -> None:
-    serializable = [record.model_dump() for record in records]
-    DB_FILE.write_text(json.dumps(serializable, ensure_ascii=False, indent=2), encoding="utf-8")
+def clear_submissions_db() -> None:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM submissions")
 
 
 def score_from_text(text: str) -> Scores:
@@ -172,7 +312,14 @@ def build_openai_reply(message: str, turn_count: int, history: List[ChatMessage]
 
 @app.get("/api/health")
 def health() -> Dict[str, str]:
-    return {"status": "ok", "app": "Missao Vieira FastAPI"}
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                cur.fetchone()
+        return {"status": "ok", "app": "Missao Vieira FastAPI", "database": "ok"}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Database unavailable: {exc}") from exc
 
 
 @app.post("/api/admin/login")
@@ -225,8 +372,6 @@ def create_submission(payload: Dict[str, object]) -> Dict[str, object]:
         top_path_title = str(payload.get("topPathTitle") or "Ensino Médio Regular")
         match_percentage = int(payload.get("matchPercentage") or 85)
 
-        submissions = read_submissions()
-
         new_record = SubmissionRecord(
             id=f"sub_{int(datetime.now().timestamp() * 1000)}",
             studentInfo=student_info,
@@ -237,28 +382,13 @@ def create_submission(payload: Dict[str, object]) -> Dict[str, object]:
             submittedAt=datetime.now(timezone.utc).isoformat(),
         )
 
-        existing_index = -1
-        for idx, item in enumerate(submissions):
-            same_phone = bool(student_info.phone) and item.studentInfo.phone == student_info.phone
-            same_student = (
-                item.studentInfo.fullName.strip().lower() == student_info.fullName.strip().lower()
-                and item.studentInfo.classGroup == student_info.classGroup
-            )
-            if same_phone or same_student:
-                existing_index = idx
-                break
-
-        if existing_index >= 0:
-            submissions[existing_index] = new_record
-        else:
-            submissions.append(new_record)
-
-        write_submissions(submissions)
+        upsert_submission(new_record)
+        total_submissions = len(read_submissions())
 
         return {
             "success": True,
             "record": new_record.model_dump(),
-            "totalSubmissions": len(submissions),
+            "totalSubmissions": total_submissions,
         }
     except HTTPException:
         raise
@@ -268,7 +398,7 @@ def create_submission(payload: Dict[str, object]) -> Dict[str, object]:
 
 @app.delete("/api/submissions")
 def clear_submissions() -> Dict[str, object]:
-    write_submissions([])
+    clear_submissions_db()
     return {"success": True, "message": "Todas as respostas foram limpas."}
 
 
@@ -288,5 +418,7 @@ def chat(payload: ChatRequest) -> ChatResponse:
 
 if __name__ == "__main__":
     import uvicorn
+
+    init_db()
 
     uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "8000")), reload=True)
