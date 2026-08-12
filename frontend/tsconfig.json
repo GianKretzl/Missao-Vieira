@@ -13,6 +13,11 @@
     "moduleResolution": "bundler",
     "isolatedModules": true,
     "moduleDetection": "force",
+    "types": [
+      "vite/client",
+      "react",
+      "react-dom"
+    ],
     "allowJs": true,
     "jsx": "react-jsx",
     "paths": {
