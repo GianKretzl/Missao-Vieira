@@ -4,6 +4,7 @@ import { ChatMessage, CareerPath } from '../types';
 import { INITIAL_CHAT_MESSAGES } from '../data/vocationalData';
 import { Send, Bot, User, Sparkles, Loader2, ArrowRight, CheckCircle, Zap } from 'lucide-react';
 import { playSound } from './SoundEffects';
+import { buildApiUrl } from '../lib/api';
 
 interface InterviewChatStageProps {
   onCompleteChat: (chatHistory: ChatMessage[], detectedScores: Record<CareerPath, number>) => void;
@@ -78,7 +79,7 @@ export const InterviewChatStage: React.FC<InterviewChatStageProps> = ({
     setScores(updatedScores);
 
     try {
-      const response = await fetch('/api/chat', {
+      const response = await fetch(buildApiUrl('/api/chat'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

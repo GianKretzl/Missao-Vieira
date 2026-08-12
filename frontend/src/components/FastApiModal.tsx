@@ -12,59 +12,61 @@ export const FastApiModal: React.FC<FastApiModalProps> = ({ isOpen, onClose }) =
 
   if (!isOpen) return null;
 
-  const pythonFastApiCode = `# main.py - FastAPI Backend para o Teste Vocacional
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import List, Optional, Dict
+    const pythonFastApiCode = `# main.py - FastAPI com integração OpenAI
+  from fastapi import FastAPI
+  from pydantic import BaseModel
+  from typing import List, Optional, Dict
+  from openai import OpenAI
+  import os
 
-app = FastAPI(title="Vocacional Tech API", version="1.0.0")
+  app = FastAPI(title="Vocacional Tech API", version="1.0.0")
+  client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-class ChatMessage(BaseModel):
+  class ChatMessage(BaseModel):
     id: str
     sender: str
     text: str
     timestamp: Optional[str] = None
 
-class ChatRequest(BaseModel):
+  class ChatRequest(BaseModel):
     message: str
     turn_count: int
     history: List[ChatMessage]
 
-class ChatResponse(BaseModel):
+  class ChatResponse(BaseModel):
     reply: str
     options: Optional[List[str]] = None
     scores: Dict[str, int]
 
-@app.post("/api/chat", response_model=ChatResponse)
-async def handle_chat(payload: ChatRequest):
+  @app.post("/api/chat", response_model=ChatResponse)
+  async def handle_chat(payload: ChatRequest):
     user_text = payload.message.lower()
-    
     scores = {"regular": 0, "administracao": 0, "eletromecanica": 0}
-    
-    if any(w in user_text for w in ["ferramenta", "montar", "elétrica", "máquina", "prática"]):
-        scores["eletromecanica"] += 3
-    elif any(w in user_text for w in ["organizar", "evento", "projeto", "negócio", "equipe"]):
-        scores["administracao"] += 3
-    elif any(w in user_text for w in ["livro", "escrever", "estudar", "enem", "pesquisar"]):
-        scores["regular"] += 3
-        
-    reply_text = f"Excelente observação! Seu interesse foi registrado. Como você gosta de trabalhar em equipe?"
-    options = [
-        "Liderando e definindo prazos",
-        "Executando tarefas técnicas práticas",
-        "Analisando dados e redigindo relatórios"
-    ]
-    
-    return ChatResponse(
-        reply=reply_text,
-        options=options,
-        scores=scores
-    )
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-`;
+    if any(w in user_text for w in ["ferramenta", "montar", "elétrica", "máquina", "prática"]):
+      scores["eletromecanica"] += 3
+    if any(w in user_text for w in ["organizar", "evento", "projeto", "negócio", "equipe"]):
+      scores["administracao"] += 3
+    if any(w in user_text for w in ["livro", "escrever", "estudar", "enem", "pesquisar"]):
+      scores["regular"] += 3
+
+    reply_text = "Ótima resposta!"
+    if os.getenv("OPENAI_API_KEY"):
+      completion = client.chat.completions.create(
+        model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        messages=[
+          {"role": "system", "content": "Você é um orientador vocacional jovem."},
+          {"role": "user", "content": payload.message},
+        ],
+      )
+      reply_text = completion.choices[0].message.content or reply_text
+
+    return ChatResponse(
+      reply=reply_text,
+      options=["Quero exemplo prático", "Prefiro gestão", "Quero foco no vestibular"],
+      scores=scores,
+    )
+  `;
 
   const copyCode = () => {
     navigator.clipboard.writeText(pythonFastApiCode);
@@ -115,7 +117,7 @@ if __name__ == "__main__":
                 <Terminal size={18} className="text-cyan-400" /> Endpoint Requerido
               </h4>
               <p className="text-slate-300 text-xs sm:text-sm leading-relaxed">
-                O frontend envia requisições <code className="bg-slate-950 px-2 py-0.5 rounded text-cyan-400 font-mono">POST /api/chat</code> durante a Etapa 2 (Entrevista Vocacional). O backend FastAPI deve aceitar o histórico de chat e retornar o texto de resposta e sugestões.
+                O frontend envia requisições <code className="bg-slate-950 px-2 py-0.5 rounded text-cyan-400 font-mono">POST /api/chat</code> durante a Etapa 2 (Entrevista Vocacional). Com <code className="bg-slate-950 px-2 py-0.5 rounded text-cyan-400 font-mono">OPENAI_API_KEY</code>, o backend responde com IA real; sem chave, usa fallback local.
               </p>
             </div>
 

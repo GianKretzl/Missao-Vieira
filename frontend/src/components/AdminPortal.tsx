@@ -46,6 +46,7 @@ import {
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { playSound } from './SoundEffects';
+import { buildApiUrl } from '../lib/api';
 
 export interface SubmissionRecord {
   id: string;
@@ -112,7 +113,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const fetchSubmissions = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/submissions');
+      const res = await fetch(buildApiUrl('/api/submissions'));
       if (res.ok) {
         const data = await res.json();
         setSubmissions(data);
@@ -138,7 +139,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     playSound('click', soundEnabled);
 
     try {
-      const res = await fetch('/api/admin/login', {
+      const res = await fetch(buildApiUrl('/api/admin/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),

@@ -9,6 +9,7 @@ import { TestArena, ScoreState } from './components/TestArena';
 import { ResultStage } from './components/ResultStage';
 import { FastApiModal } from './components/FastApiModal';
 import { AdminPortal } from './components/AdminPortal';
+import { buildApiUrl } from './lib/api';
 
 export default function App() {
   const [currentStage, setCurrentStage] = useState<AppStage>('landing');
@@ -60,7 +61,7 @@ export default function App() {
     const matchPct = Math.min(98, Math.max(72, Math.round((top.score / total) * 100)));
 
     try {
-      await fetch('/api/submissions', {
+      await fetch(buildApiUrl('/api/submissions'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
