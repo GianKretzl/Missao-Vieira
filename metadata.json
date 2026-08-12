@@ -1,0 +1,6 @@
+{
+  "name": "Missão Vieira",
+  "description": "Plataforma de orientação vocacional e avaliação gamificada para estudantes do Ensino Médio da Escola Missão Vieira",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
